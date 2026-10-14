@@ -4,7 +4,6 @@ import type { ProviderStatus } from './types'
 export function getConfig() {
   const dailyLimit = Number.parseInt(process.env.DISCOVERY_DAILY_LIMIT ?? '', 10)
   return {
-    placesApiKey: process.env.GOOGLE_PLACES_API_KEY?.trim() || null,
     geminiApiKey: process.env.GEMINI_API_KEY?.trim() || null,
     geminiModel: process.env.GEMINI_MODEL?.trim() || 'gemini-3.6-flash',
     discoveryDailyLimit: Number.isFinite(dailyLimit) && dailyLimit > 0 ? dailyLimit : 20,
@@ -19,7 +18,7 @@ export function getConfig() {
 
 export function providerStatus(): ProviderStatus {
   const c = getConfig()
-  return { places: Boolean(c.placesApiKey), gemini: Boolean(c.geminiApiKey), geminiModel: c.geminiModel, database: Boolean(process.env.DATABASE_URL) }
+  return { places: true, gemini: Boolean(c.geminiApiKey), geminiModel: c.geminiModel, database: Boolean(process.env.DATABASE_URL) }
 }
 
 /** Run `fn` over `items` with at most `limit` in flight, preserving order. */

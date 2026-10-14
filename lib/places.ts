@@ -1,11 +1,5 @@
 import { z } from 'zod'
 
-/**
- * Discovery provider: Google Places API (New) "Text Search".
- * Docs: https://developers.google.com/maps/documentation/places/web-service/text-search
- * Every result is a real listing returned by Google; nothing here fabricates businesses.
- */
-
 export class ProviderError extends Error {
   constructor(message: string, readonly status?: number) {
     super(message)
@@ -22,80 +16,167 @@ export type PlaceCandidate = {
   category: string
   rating: number | null
   ratingCount: number | null
+  snippet?: string | null
 }
 
-const placeSchema = z.object({
-  id: z.string().min(1),
-  displayName: z.object({ text: z.string() }).optional(),
-  formattedAddress: z.string().optional(),
-  websiteUri: z.string().optional(),
-  googleMapsUri: z.string().optional(),
-  primaryTypeDisplayName: z.object({ text: z.string() }).optional(),
-  types: z.array(z.string()).optional(),
-  businessStatus: z.string().optional(),
-  rating: z.number().optional(),
-  userRatingCount: z.number().optional(),
+const responseSchema = z.object({
+  ok: z.boolean().optional(),
+  results: z.array(z.unknown()).optional(),
+  error: z.string().optional(),
+  detail: z.string().optional(),
 })
-const responseSchema = z.object({ places: z.array(z.unknown()).optional() })
 
-// websiteUri/rating are billed under the Text Search *Enterprise* SKU; the rest are Pro.
-const FIELD_MASK = [
-  'places.id',
-  'places.displayName',
-  'places.formattedAddress',
-  'places.websiteUri',
-  'places.googleMapsUri',
-  'places.primaryTypeDisplayName',
-  'places.types',
-  'places.businessStatus',
-  'places.rating',
-  'places.userRatingCount',
-].join(',')
+const resultSchema = z.object({
+  url: z.string().url(),
+  title: z.string().optional(),
+  snippet: z.string().optional(),
+})
+
+const blockedHosts = [
+  'prweb.com',
+  'whatclinic.com',
+  'freeindex.co.uk',
+  'yell.com',
+  'thomsonlocal.com',
+  '192.com',
+  'trustpilot.com',
+  'yellowpages.com',
+  'yelp.com',
+  'facebook.com',
+  'instagram.com',
+  'linkedin.com',
+  'bark.com',
+  'hotfrog.com',
+  'cylex-uk.co.uk',
+  'scoot.co.uk',
+  'threebestrated.co.uk',
+  'doctify.com',
+  'google.com',
+]
+
+function isBlockedHost(host: string): boolean {
+  return blockedHosts.some((blocked) =>
+    host === blocked || host.endsWith(`.${blocked}`),
+  )
+}
+
+function cleanName(title: string, host: string): string {
+  const first = title
+    .split(/\s+[|–—]\s+|\s+-\s+/)[0]
+    ?.trim()
+
+  return first && first.length >= 2
+    ? first
+    : host.replace(/^www\./, '').split('.')[0]
+}
 
 export async function searchPlaces(
-  input: { businessType: string; location: string; maxResults: number; apiKey: string },
+  input: {
+    businessType: string
+    location: string
+    maxResults: number
+    apiKey?: string
+  },
   fetchImpl: typeof fetch = fetch,
 ): Promise<PlaceCandidate[]> {
+  const target = Math.min(Math.max(input.maxResults, 1), 20)
+  const params = new URLSearchParams({
+    index: 'web',
+    q: `${input.businessType} ${input.location} official website`,
+    size: String(Math.min(100, Math.max(20, target * 6))),
+    lang: 'en',
+  })
+
   let response: Response
+
   try {
-    response = await fetchImpl('https://places.googleapis.com/v1/places:searchText', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-goog-api-key': input.apiKey, 'x-goog-fieldmask': FIELD_MASK },
-      body: JSON.stringify({ textQuery: `${input.businessType} in ${input.location}`, pageSize: Math.min(Math.max(input.maxResults, 1), 20), languageCode: 'en' }),
-      signal: AbortSignal.timeout(15_000),
-    })
+    response = await fetchImpl(
+      `https://freeserp.ai/api.php?${params.toString()}`,
+      { signal: AbortSignal.timeout(15_000) },
+    )
   } catch (error) {
-    throw new ProviderError(`Could not reach Google Places: ${error instanceof Error ? error.message : 'network error'}`)
+    throw new ProviderError(
+      `Could not reach FreeSerp: ${
+        error instanceof Error ? error.message : 'network error'
+      }`,
+    )
   }
+
   if (!response.ok) {
     let detail = ''
     try {
-      const body = (await response.json()) as { error?: { message?: string } }
-      detail = body.error?.message ?? ''
+      const body = await response.json() as {
+        error?: string
+        detail?: string
+      }
+      detail = body.detail ?? body.error ?? ''
     } catch {}
-    throw new ProviderError(`Google Places returned ${response.status}${detail ? `: ${detail}` : ''}`, response.status)
+
+    throw new ProviderError(
+      `FreeSerp returned ${response.status}${
+        detail ? `: ${detail}` : ''
+      }`,
+      response.status,
+    )
   }
-  const parsed = responseSchema.safeParse(await response.json())
-  if (!parsed.success) throw new ProviderError('Google Places returned an unexpected response.')
-  const out: PlaceCandidate[] = []
+
+  const payload = responseSchema.safeParse(await response.json())
+
+  if (!payload.success || payload.data.ok === false) {
+    throw new ProviderError('FreeSerp returned an unexpected response.')
+  }
+
+  const results: PlaceCandidate[] = []
   const seen = new Set<string>()
-  for (const raw of parsed.data.places ?? []) {
-    const place = placeSchema.safeParse(raw)
-    if (!place.success || !place.data.displayName?.text) continue
-    const p = place.data
-    if (p.businessStatus && p.businessStatus !== 'OPERATIONAL') continue // skip permanently/temporarily closed
-    if (seen.has(p.id)) continue
-    seen.add(p.id)
-    out.push({
-      placeId: p.id,
-      name: p.displayName!.text,
-      address: p.formattedAddress ?? null,
-      websiteUri: p.websiteUri ?? null,
-      mapsUrl: p.googleMapsUri ?? null,
-      category: p.primaryTypeDisplayName?.text ?? p.types?.[0]?.replace(/_/g, ' ') ?? 'Business',
-      rating: p.rating ?? null,
-      ratingCount: p.userRatingCount ?? null,
+
+  for (const raw of payload.data.results ?? []) {
+    const parsed = resultSchema.safeParse(raw)
+    if (!parsed.success) continue
+
+    const result = parsed.data
+    let url: URL
+
+    try {
+      url = new URL(result.url)
+    } catch {
+      continue
+    }
+
+    if (!['https:', 'http:'].includes(url.protocol)) continue
+
+    const host = url.hostname.toLowerCase().replace(/^www\./, '')
+
+    if (isBlockedHost(host)) continue
+
+    // Prefer business sites over obvious press releases and articles.
+    if (
+      /\/(releases?|press|news|blog|articles?|posts?)(\/|$)/i.test(
+        url.pathname,
+      )
+    ) continue
+
+    if (/\.(pdf|docx?|xlsx?)$/i.test(url.pathname)) continue
+    if (seen.has(host)) continue
+
+    const name = result.title?.trim()
+    if (!name) continue
+
+    seen.add(host)
+
+    results.push({
+      placeId: `${host}${url.pathname}`,
+      name: cleanName(name, host),
+      address: null,
+      websiteUri: url.toString(),
+      mapsUrl: url.toString(),
+      category: input.businessType,
+      rating: null,
+      ratingCount: null,
+      snippet: result.snippet?.trim() || null,
     })
+
+    if (results.length >= target) break
   }
-  return out
+
+  return results
 }

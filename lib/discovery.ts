@@ -22,9 +22,18 @@ function providerEvidence(place: PlaceCandidate, domain: string, fetchedAt: stri
   const source = place.mapsUrl ?? ''
   if (!source) return []
   const items: EvidenceItem[] = []
-  items.push({ kind: 'provider', text: `Listed on Google Maps as “${place.name}”${place.address ? ` at ${place.address}` : ''}.`, sourceUrl: source, fetchedAt })
-  if (place.rating !== null) items.push({ kind: 'provider', text: `Google Maps rating ${place.rating.toFixed(1)}${place.ratingCount !== null ? ` from ${place.ratingCount} reviews` : ''}.`, sourceUrl: source, fetchedAt })
-  if (!domain) items.push({ kind: 'provider', text: 'No website is listed on the Google Maps profile.', sourceUrl: source, fetchedAt })
+  items.push({
+    kind: 'provider',
+    text: `Found via FreeSerp web search: “${place.name}”.${place.snippet ? ` Search excerpt: ${place.snippet}` : ''}`,
+    sourceUrl: source,
+    fetchedAt,
+  })
+  if (!domain) items.push({
+    kind: 'provider',
+    text: 'No business website was identified in the search results.',
+    sourceUrl: source,
+    fetchedAt,
+  })
   return items
 }
 
@@ -39,12 +48,14 @@ function outcomeToProspect(base: NewProspect, outcome: Outcome | undefined, gemi
 
 export async function runDiscovery(userId: string, input: DiscoveryInput, deps: Deps = defaultDeps): Promise<DiscoveryResult> {
   const config = getConfig()
-  if (!config.placesApiKey) throw new ConfigError('Discovery is not available: GOOGLE_PLACES_API_KEY is not configured on the server.')
   const runId = await startDiscovery(userId, { businessType: input.businessType, location: input.location, focus: input.focus }, config.discoveryDailyLimit)
   const warnings: string[] = []
   try {
     const profile = await getSettings(userId)
-    const places = await deps.searchPlaces({ businessType: input.businessType, location: input.location, maxResults: input.maxResults, apiKey: config.placesApiKey })
+    const places = await deps.searchPlaces({ businessType: input.businessType, location: input.location, maxResults: input.maxResults })
+    if (places.length === 0) {
+      warnings.push('No suitable business websites were found. Try a different search phrase or nearby location.')
+    }
     const now = new Date().toISOString()
 
     // Build candidates and de-duplicate within this result set (by website domain, then place id).
@@ -94,7 +105,7 @@ export async function runDiscovery(userId: string, input: DiscoveryInput, deps: 
         category: c.place.category,
         location: input.location,
         address: c.place.address,
-        sourceProvider: 'google_places',
+        sourceProvider: 'freeserp_web',
         sourceUrl: c.place.mapsUrl,
         providerPlaceId: c.place.placeId,
         dedupeKey: c.key,
