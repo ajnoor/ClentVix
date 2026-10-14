@@ -279,7 +279,7 @@ function SettingsView({ settings, loading, error, status, onSaved, onImported }:
         <label>Default business type<input maxLength={120} value={form.defaultBusinessType} onChange={(e) => set('defaultBusinessType', e.target.value)} placeholder="e.g. dental clinics" /></label>
         <label>Default location<input maxLength={120} value={form.defaultLocation} onChange={(e) => set('defaultLocation', e.target.value)} placeholder="e.g. Brighton, UK" /></label></div>
       <div className="settings-card"><div className="settings-card-head"><div className="settings-icon"><Zap size={18} /></div><div><h3>Data providers</h3><p>Status reported by the server.</p></div></div>
-        <div className="provider-row"><div><strong>Google Places (discovery)</strong><span>Finds real business listings</span></div>{badge(status?.places, 'Configured', 'Not configured')}</div>
+        <div className="provider-row"><div><strong>FreeSerp web search (discovery)</strong><span>Finds candidate business websites; details need verification</span></div>{badge(status?.places, 'Configured', 'Not configured')}</div>
         <div className="provider-row"><div><strong>Gemini (analysis){status ? ` · ${status.geminiModel}` : ''}</strong><span>Explains, ranks, suggests actions</span></div>{badge(status?.gemini, 'Configured', 'Not configured')}</div>
         <div className="provider-row"><div><strong>Database</strong><span>Neon / PostgreSQL</span></div>{badge(status?.database, 'Connected', 'Missing')}</div>
         <p style={{ fontSize: 10, color: '#98929f' }}>Keys are set as server environment variables and are never shown here.</p></div>
@@ -332,8 +332,8 @@ function DiscoveryModal({ defaults, status, hasProfile, onClose, onDone }: { def
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="New discovery"><div className="modal">
       <button className="modal-close" onClick={onClose} aria-label="Close"><X size={18} /></button>
       <div className="modal-icon"><Sparkles size={20} /></div><p className="eyebrow">New discovery</p><h2>Find businesses worth approaching.</h2>
-      <p className="modal-subtitle">We search Google Places for real businesses, read their websites, then Gemini explains and ranks them.</p>
-      {status && !status.places && <div className="error-box">Discovery is unavailable: GOOGLE_PLACES_API_KEY is not configured on the server.</div>}
+      <p className="modal-subtitle">We search the web for candidate business websites, read their pages, then Gemini explains and ranks them.</p>
+      {status && !status.places && <div className="error-box">Web search is currently unavailable.</div>}
       {status && !status.gemini && <div className="error-box">GEMINI_API_KEY is not configured: prospects will be saved without analysis.</div>}
       {!hasProfile && <div className="ok-box" style={{ background: '#f8f6ff', borderColor: '#e2d8ff', color: '#5b4a8c' }}>Tip: add your service in Settings for sharper ranking.</div>}
       <label>Business type<input value={businessType} onChange={(e) => setBusinessType(e.target.value)} placeholder="e.g. dental clinics" maxLength={120} /></label>
